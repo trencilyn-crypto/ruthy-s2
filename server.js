@@ -13,7 +13,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// FIX __dirname FOR ES MODULE
+// FIX __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -31,7 +31,7 @@ if (process.env.AIVEN_URL) {
   };
 }
 
-// CREATE TABLE
+// INIT DATABASE
 const initDb = async () => {
   try {
     await db.query(`
@@ -49,7 +49,7 @@ const initDb = async () => {
 
 initDb();
 
-// GET DATA
+// API ROUTES
 app.get('/api/data', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -68,7 +68,6 @@ app.get('/api/data', async (req, res) => {
   }
 });
 
-// SAVE DATA
 app.post('/api/data', async (req, res) => {
   try {
     const config = JSON.stringify(req.body);
@@ -93,7 +92,7 @@ app.post('/api/data', async (req, res) => {
 });
 
 // HEALTH CHECK
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({
     status: 'running'
   });
@@ -102,7 +101,8 @@ app.get('/api/health', async (req, res) => {
 // SERVE FRONTEND
 app.use(express.static(path.join(__dirname, 'dist')));
 
-app.get('*', (req, res) => {
+// FIXED EXPRESS 5 ROUTE
+app.get('/{*any}', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
