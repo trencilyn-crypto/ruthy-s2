@@ -13,25 +13,25 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// FIX __dirname
+// FIX PATH
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // DATABASE CONNECTION
-let db;
+const pool = mysql.createPool({
+  host: 'mysql-16fbe6d8-ruthyseatery12.l.aivencloud.com',
+  port: 28811,
+  user: 'avnadmin',
+  password: 'AVNS_b_GwzztL-Efn3ph3zyE',
+  database: 'defaultdb',
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
-if (process.env.AIVEN_URL) {
-  const pool = mysql.createPool(process.env.AIVEN_URL);
-  db = pool.promise();
-} else {
-  console.warn('WARNING: AIVEN_URL not set.');
+const db = pool.promise();
 
-  db = {
-    query: async () => [[]]
-  };
-}
-
-// INIT DATABASE
+// INIT TABLE
 const initDb = async () => {
   try {
     await db.query(`
@@ -41,15 +41,45 @@ const initDb = async () => {
       )
     `);
 
-    console.log('✅ Database Ready');
+    console.log('✅ Database connected');
   } catch (err) {
-    console.error('❌ Database Error:', err.message);
+    console.error('DB ERROR:', err.message);
   }
 };
 
 initDb();
 
-// API ROUTES
+//
+// SAVE DATA TO DATABASE
+//
+app.post('/api/data', async (req, res) => {
+  try {
+    const data = JSON.stringify(req.body);
+
+    await db.query(
+      `
+      INSERT INTO site_configs (id, config_json)
+      VALUES (1, ?)
+      ON DUPLICATE KEY UPDATE config_json = ?
+      `,
+      [data, data]
+    );
+
+    res.json({
+      success: true,
+      message: "Saved to database"
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+//
+// GET DATA FROM DATABASE
+//
 app.get('/api/data', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -68,21 +98,16 @@ app.get('/api/data', async (req, res) => {
   }
 });
 
-app.post('/api/data', async (req, res) => {
+//
+// CHECK DATABASE (TEST)
+//
+app.get('/api/check', async (req, res) => {
   try {
-    const config = JSON.stringify(req.body);
-
-    await db.query(
-      `
-      INSERT INTO site_configs (id, config_json)
-      VALUES (1, ?)
-      ON DUPLICATE KEY UPDATE config_json = ?
-      `,
-      [config, config]
-    );
+    const [rows] = await db.query('SELECT * FROM site_configs');
 
     res.json({
-      success: true
+      total: rows.length,
+      data: rows
     });
   } catch (err) {
     res.status(500).json({
@@ -91,24 +116,33 @@ app.post('/api/data', async (req, res) => {
   }
 });
 
+//
 // HEALTH CHECK
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'running'
-  });
+//
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.json({ status: 'connected' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
 });
 
+//
 // SERVE FRONTEND
+//
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// FIXED EXPRESS 5 ROUTE
-app.get('/{*any}', (req, res) => {
+// FIX ROUTE (important)
+app.get('/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
+//
 // START SERVER
+//
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Ruthy System Running on Port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
