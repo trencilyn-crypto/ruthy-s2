@@ -1,37 +1,36 @@
-import express from 'express';
-import mysql from 'mysql2';
-import cors from 'cors';
-import bodyParser from 'body-parser';
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
+/**
+ * PRODUCTION NODE.JS SERVER FOR RENDER + AIVEN
+ */
 
-dotenv.config();
+const express = require('express');
+const mysql = require('mysql2');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+require('dotenv').config();
 
 const app = express();
-
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// FIX PATH
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// =====================
 // DATABASE CONNECTION
-const pool = mysql.createPool({
-  host: 'mysql-16fbe6d8-ruthyseatery12.l.aivencloud.com',
-  port: 28811,
-  user: 'avnadmin',
-  password: 'AVNS_b_GwzztL-Efn3ph3zyE',
-  database: 'defaultdb',
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
+// =====================
+let db;
 
-const db = pool.promise();
+if (process.env.AIVEN_URL) {
+  const pool = mysql.createPool(process.env.AIVEN_URL);
+  db = pool.promise();
+  console.log("✅ Connected to Aiven MySQL");
+} else {
+  console.warn("⚠️ AIVEN_URL not set. Using mock DB.");
+  db = {
+    query: async () => [[{ config_json: "{}" }]],
+  };
+}
 
-// INIT TABLE
+// =====================
+// INIT DB
+// =====================
 const initDb = async () => {
   try {
     await db.query(`
@@ -40,46 +39,17 @@ const initDb = async () => {
         config_json LONGTEXT
       )
     `);
-
-    console.log('✅ Database connected');
+    console.log("✅ Database Ready");
   } catch (err) {
-    console.error('DB ERROR:', err.message);
+    console.error("❌ DB Init Error:", err.message);
   }
 };
 
 initDb();
 
-//
-// SAVE DATA TO DATABASE
-//
-app.post('/api/data', async (req, res) => {
-  try {
-    const data = JSON.stringify(req.body);
-
-    await db.query(
-      `
-      INSERT INTO site_configs (id, config_json)
-      VALUES (1, ?)
-      ON DUPLICATE KEY UPDATE config_json = ?
-      `,
-      [data, data]
-    );
-
-    res.json({
-      success: true,
-      message: "Saved to database"
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
-  }
-});
-
-//
-// GET DATA FROM DATABASE
-//
+// =====================
+// API ROUTES
+// =====================
 app.get('/api/data', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -89,60 +59,56 @@ app.get('/api/data', async (req, res) => {
     if (rows.length > 0) {
       res.json(JSON.parse(rows[0].config_json));
     } else {
-      res.json({});
+      res.json({ message: "No data found" });
     }
   } catch (err) {
-    res.status(500).json({
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-//
-// CHECK DATABASE (TEST)
-//
-app.get('/api/check', async (req, res) => {
+app.post('/api/data', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM site_configs');
+    const config = JSON.stringify(req.body);
 
-    res.json({
-      total: rows.length,
-      data: rows
-    });
+    await db.query(`
+      INSERT INTO site_configs (id, config_json)
+      VALUES (1, ?)
+      ON DUPLICATE KEY UPDATE config_json = ?
+    `, [config, config]);
+
+    res.json({ success: true });
   } catch (err) {
-    res.status(500).json({
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-//
-// HEALTH CHECK
-//
 app.get('/api/health', async (req, res) => {
   try {
     await db.query('SELECT 1');
-    res.json({ status: 'connected' });
+    res.json({
+      status: "connected",
+      db: "aiven_mysql",
+      time: new Date()
+    });
   } catch (err) {
-    res.status(500).json({ status: 'error', error: err.message });
+    res.status(500).json({ status: "error", error: err.message });
   }
 });
 
-//
-// SERVE FRONTEND
-//
+// =====================
+// FRONTEND STATIC (IMPORTANT)
+// =====================
+const path = require('path');
+
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// FIX ROUTE (important)
-app.get('/*', (req, res) => {
+// ✅ FIXED ROUTE (NO /* !!)
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-//
-// START SERVER
-//
-const PORT = process.env.PORT || 3000;
-
+// =====================
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
