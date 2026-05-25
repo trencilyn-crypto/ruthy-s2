@@ -7,111 +7,107 @@ dotenv.config();
 
 const app = express();
 
-// middleware
 app.use(cors());
 app.use(express.json());
 
-// ======================
-// MYSQL CONNECTION
-// ======================
+// =======================
+// DATABASE CONNECTION
+// =======================
 let db;
 
-if (process.env.AIVEN_URL) {
-  const pool = mysql.createPool(process.env.AIVEN_URL);
-  db = pool.promise();
-  console.log("✅ Database Connected (Aiven)");
-} else {
-  console.warn("⚠ AIVEN_URL not set!");
-  db = {
-    query: async () => [],
-  };
+if (!process.env.AIVEN_URL) {
+  console.error("❌ AIVEN_URL is missing in Render environment variables");
+  process.exit(1);
 }
 
-// ======================
-// INIT DATABASE
-// ======================
-const initDb = async () => {
+const pool = mysql.createPool(process.env.AIVEN_URL);
+db = pool.promise();
+
+console.log("✅ Database pool created");
+
+// =======================
+// INIT TABLE
+// =======================
+async function initDB() {
   try {
     await db.query(`
-      CREATE TABLE IF NOT EXISTS site_configs (
+      CREATE TABLE IF NOT EXISTS site_data (
         id INT PRIMARY KEY,
-        config_json LONGTEXT
+        data LONGTEXT
       )
     `);
 
-    console.log("✅ Tables Ready");
+    console.log("✅ Table ready");
   } catch (err) {
-    console.error("DB Init Error:", err.message);
+    console.error("DB INIT ERROR:", err.message);
   }
-};
+}
 
-initDb();
+initDB();
 
-// ======================
-// ROUTES
-// ======================
-
-// Root route (FIX for "Cannot GET /")
+// =======================
+// ROOT ROUTE
+// =======================
 app.get("/", (req, res) => {
-  res.send("🚀 Ruthy Backend is Running");
+  res.send("🚀 Ruthy Backend Running Successfully");
 });
 
-// Health check
+// =======================
+// HEALTH CHECK
+// =======================
 app.get("/api/health", async (req, res) => {
   try {
     await db.query("SELECT 1");
-    res.json({ status: "connected" });
+    res.json({ status: "connected", db: "ok" });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// =======================
+// SAVE DATA (FROM REACT)
+// =======================
+app.post("/api/data", async (req, res) => {
+  try {
+    const data = JSON.stringify(req.body);
+
+    await db.query(
+      `
+      INSERT INTO site_data (id, data)
+      VALUES (1, ?)
+      ON DUPLICATE KEY UPDATE data = ?
+    `,
+      [data, data]
+    );
+
+    res.json({ success: true, message: "Data saved to database" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET data
+// =======================
+// GET DATA
+// =======================
 app.get("/api/data", async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT config_json FROM site_configs WHERE id = 1"
+      "SELECT data FROM site_data WHERE id = 1"
     );
 
     if (!rows.length) {
-      return res.status(404).json({ message: "No data found" });
+      return res.json({ message: "No data yet" });
     }
 
-    res.json(JSON.parse(rows[0].config_json));
+    res.json(JSON.parse(rows[0].data));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST data (SAVE TO DB)
-app.post("/api/data", async (req, res) => {
-  try {
-    const config = JSON.stringify(req.body);
-
-    await db.query(
-      `INSERT INTO site_configs (id, config_json)
-       VALUES (1, ?)
-       ON DUPLICATE KEY UPDATE config_json = ?`,
-      [config, config]
-    );
-
-    res.json({ success: true, message: "Saved to database" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ======================
-// FIX FOR "path-to-regexp" ERROR
-// DO NOT use "/*" or "*"
-// ======================
-app.get("*", (req, res) => {
-  res.status(404).send("Route not found");
-});
-
-// ======================
+// =======================
 // START SERVER
-// ======================
+// =======================
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
