@@ -7,28 +7,35 @@ dotenv.config();
 
 const app = express();
 
+// =====================
+// MIDDLEWARE
+// =====================
 app.use(cors());
 app.use(express.json());
 
-// =======================
-// DATABASE CONNECTION
-// =======================
-let db;
+// =====================
+// SAFE DATABASE SETUP
+// =====================
+let db = null;
 
-if (!process.env.AIVEN_URL) {
-  console.error("❌ AIVEN_URL is missing in Render environment variables");
-  process.exit(1);
+function connectDB() {
+  if (!process.env.AIVEN_URL) {
+    console.warn("⚠ AIVEN_URL is NOT set. Running in OFFLINE mode.");
+    return null;
+  }
+
+  const pool = mysql.createPool(process.env.AIVEN_URL);
+  return pool.promise();
 }
 
-const pool = mysql.createPool(process.env.AIVEN_URL);
-db = pool.promise();
+db = connectDB();
 
-console.log("✅ Database pool created");
-
-// =======================
-// INIT TABLE
-// =======================
+// =====================
+// INIT DB (SAFE)
+// =====================
 async function initDB() {
+  if (!db) return;
+
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS site_data (
@@ -37,7 +44,7 @@ async function initDB() {
       )
     `);
 
-    console.log("✅ Table ready");
+    console.log("✅ Database tables ready");
   } catch (err) {
     console.error("DB INIT ERROR:", err.message);
   }
@@ -45,31 +52,51 @@ async function initDB() {
 
 initDB();
 
-// =======================
+// =====================
 // ROOT ROUTE
-// =======================
+// =====================
 app.get("/", (req, res) => {
-  res.send("🚀 Ruthy Backend Running Successfully");
+  res.send("🚀 Ruthy Backend is Running Successfully");
 });
 
-// =======================
+// =====================
 // HEALTH CHECK
-// =======================
+// =====================
 app.get("/api/health", async (req, res) => {
   try {
+    if (!db) {
+      return res.status(500).json({
+        status: "no-db",
+        message: "AIVEN_URL not set"
+      });
+    }
+
     await db.query("SELECT 1");
-    res.json({ status: "connected", db: "ok" });
+
+    res.json({
+      status: "connected",
+      db: "ok"
+    });
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    res.status(500).json({
+      status: "error",
+      message: err.message
+    });
   }
 });
 
-// =======================
+// =====================
 // SAVE DATA (FROM REACT)
-// =======================
+// =====================
 app.post("/api/data", async (req, res) => {
   try {
-    const data = JSON.stringify(req.body);
+    if (!db) {
+      return res.status(500).json({
+        error: "Database not connected"
+      });
+    }
+
+    const json = JSON.stringify(req.body);
 
     await db.query(
       `
@@ -77,20 +104,31 @@ app.post("/api/data", async (req, res) => {
       VALUES (1, ?)
       ON DUPLICATE KEY UPDATE data = ?
     `,
-      [data, data]
+      [json, json]
     );
 
-    res.json({ success: true, message: "Data saved to database" });
+    res.json({
+      success: true,
+      message: "Data saved"
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message
+    });
   }
 });
 
-// =======================
+// =====================
 // GET DATA
-// =======================
+// =====================
 app.get("/api/data", async (req, res) => {
   try {
+    if (!db) {
+      return res.status(500).json({
+        error: "Database not connected"
+      });
+    }
+
     const [rows] = await db.query(
       "SELECT data FROM site_data WHERE id = 1"
     );
@@ -101,13 +139,24 @@ app.get("/api/data", async (req, res) => {
 
     res.json(JSON.parse(rows[0].data));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message
+    });
   }
 });
 
-// =======================
+// =====================
+// 404 HANDLER (NO path-to-regexp ERROR)
+// =====================
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Route not found"
+  });
+});
+
+// =====================
 // START SERVER
-// =======================
+// =====================
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
